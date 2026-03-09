@@ -1,4 +1,4 @@
-// Knowledge Synapse — Main Application
+// Knowledge Synapse — Geodesic Sphere Network
 (function () {
   'use strict';
 
@@ -8,25 +8,12 @@
   let activeCategories = new Set(Object.keys(CATEGORIES));
   let selectedNode = null;
   let hoveredNode = null;
-
-  // ===== Color Utilities =====
-  function getCategoryColor(category) {
-    return CATEGORIES[category]?.color || '#666';
-  }
-
-  function hexToRgb(hex) {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return { r, g, b };
-  }
-
-  // ===== Caches =====
   let linkCountCache = {};
   let connectedNodeIds = new Set();
+  const SPHERE_RADIUS = 180;
 
+  // ===== Caches =====
   function buildCaches() {
-    // Link count per node
     linkCountCache = {};
     GRAPH_DATA.nodes.forEach(n => { linkCountCache[n.id] = 0; });
     GRAPH_DATA.links.forEach(l => {
@@ -47,71 +34,97 @@
     });
   }
 
+  function getCategoryColor(category) {
+    return CATEGORIES[category]?.color || '#888';
+  }
+
+  // ===== Spherical position pre-calculation =====
+  // Distribute nodes on a sphere using fibonacci spiral
+  function assignSphericalPositions(nodes) {
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    nodes.forEach((node, i) => {
+      const y = 1 - (i / (nodes.length - 1)) * 2; // -1 to 1
+      const radiusAtY = Math.sqrt(1 - y * y);
+      const theta = goldenAngle * i;
+      node.fx = SPHERE_RADIUS * radiusAtY * Math.cos(theta);
+      node.fy = SPHERE_RADIUS * y;
+      node.fz = SPHERE_RADIUS * radiusAtY * Math.sin(theta);
+    });
+  }
+
   // ===== Graph Initialization =====
   function initGraph() {
     const container = document.getElementById('graph-container');
     const filteredData = getFilteredData();
     buildCaches();
 
+    // Place nodes on sphere
+    assignSphericalPositions(filteredData.nodes);
+
     graph = ForceGraph3D({ controlType: 'orbit' })(container)
       .graphData(filteredData)
-      .backgroundColor('#0a0a0f')
+      .backgroundColor('#e8e8ec')
       .width(window.innerWidth)
       .height(window.innerHeight)
+      .showNavInfo(false)
 
-      // Node — small clean dots
+      // === Nodes — dark dots on sphere surface ===
       .nodeLabel(n => '')
       .nodeThreeObject(n => {
         const group = new THREE.Group();
-        const color = getCategoryColor(n.category);
         const isSelected = selectedNode && selectedNode.id === n.id;
         const isHovered = hoveredNode && hoveredNode.id === n.id;
         const isNeighbor = selectedNode && connectedNodeIds.has(n.id);
         const isDimmed = selectedNode && !isSelected && !isNeighbor;
+        const catColor = getCategoryColor(n.category);
 
-        // Dot size based on connections
+        // Dot size
         const linkCount = linkCountCache[n.id] || 0;
-        const baseSize = 2.5 + Math.min(linkCount, 12) * 0.7;
-        const size = isSelected ? baseSize * 1.5 : isHovered ? baseSize * 1.3 : baseSize;
+        const base = 1.8 + Math.min(linkCount, 10) * 0.5;
+        const size = isSelected ? base * 2.0 : isHovered ? base * 1.6 : base;
 
-        // Core dot
-        const dotGeo = new THREE.SphereGeometry(size, 24, 24);
+        // Main dot — dark gray / black
+        const dotGeo = new THREE.SphereGeometry(size, 16, 16);
+        const dotColor = isSelected ? catColor : isDimmed ? '#c0c0c0' : '#2a2a2a';
         const dotMat = new THREE.MeshBasicMaterial({
-          color: isSelected ? 0xffffff : new THREE.Color(color),
+          color: new THREE.Color(dotColor),
           transparent: true,
-          opacity: isDimmed ? 0.15 : isSelected ? 1.0 : 0.9,
+          opacity: isDimmed ? 0.25 : 1.0,
         });
         group.add(new THREE.Mesh(dotGeo, dotMat));
 
-        // Soft glow
-        if (!isDimmed) {
-          const glowGeo = new THREE.SphereGeometry(size * 2.5, 24, 24);
-          const glowMat = new THREE.MeshBasicMaterial({
-            color: isSelected ? 0xffffff : new THREE.Color(color),
+        // Category color ring on hover / select
+        if (isSelected || isHovered) {
+          const ringGeo = new THREE.RingGeometry(size * 1.6, size * 2.2, 32);
+          const ringMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(catColor),
             transparent: true,
-            opacity: isSelected ? 0.15 : isNeighbor ? 0.08 : 0.035,
+            opacity: 0.7,
+            side: THREE.DoubleSide,
           });
-          group.add(new THREE.Mesh(glowGeo, glowMat));
+          const ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.lookAt(0, 0, 0); // Face outward from sphere center
+          group.add(ring);
         }
 
         // Label
-        const showLabel = isSelected || isHovered || isNeighbor || linkCount >= 3;
+        const showLabel = isSelected || isHovered || isNeighbor || (!selectedNode && linkCount >= 4);
         if (showLabel && !isDimmed) {
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
           canvas.width = 512;
           canvas.height = 64;
-          ctx.font = `400 34px "Noto Sans JP", "Inter", sans-serif`;
+          ctx.font = `500 32px "Noto Sans JP", "Inter", sans-serif`;
           ctx.textAlign = 'center';
-          ctx.fillStyle = isSelected ? '#ffffff' : color;
-          ctx.globalAlpha = isSelected ? 1.0 : isHovered ? 0.9 : isNeighbor ? 0.7 : 0.45;
-          ctx.fillText(n.label, 256, 44);
+          ctx.fillStyle = isSelected ? catColor : '#1a1a1a';
+          ctx.globalAlpha = isSelected ? 1.0 : isHovered ? 0.9 : 0.6;
+          ctx.fillText(n.label, 256, 42);
           const texture = new THREE.CanvasTexture(canvas);
           texture.minFilter = THREE.LinearFilter;
           const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
             map: texture, transparent: true, depthWrite: false,
           }));
-          sprite.scale.set(50, 6, 1);
+          sprite.scale.set(48, 6, 1);
           sprite.position.y = size + 5;
           group.add(sprite);
         }
@@ -119,128 +132,97 @@
         return group;
       })
 
-      // Lines — always visible, thick enough to feel "connected"
+      // === Lines — thin gray wireframe feel ===
       .linkColor(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
         if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) {
-          return '#ffffff';
+          return '#1a1a1a';
         }
-        if (selectedNode) return 'rgba(60,60,80,0.3)';
-        // Blend source and target colors
-        const sColor = getCategoryColor(filteredData.nodes.find(n => n.id === sId)?.category);
-        return sColor || '#445';
+        if (selectedNode) return '#d5d5d8';
+        return '#777';
       })
       .linkOpacity(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 0.7;
-        if (selectedNode) return 0.04;
-        return 0.25 + (link.strength || 0.5) * 0.2;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 0.8;
+        if (selectedNode) return 0.08;
+        return 0.3 + (link.strength || 0.5) * 0.25;
       })
       .linkWidth(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 2.0;
-        if (selectedNode) return 0.2;
-        return 0.6 + (link.strength || 0.5) * 1.0;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 1.5;
+        if (selectedNode) return 0.15;
+        return 0.3 + (link.strength || 0.5) * 0.5;
       })
       .linkDirectionalParticles(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 4;
-        if (selectedNode) return 0;
-        return Math.ceil((link.strength || 0.5) * 2);
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 3;
+        return 0;
       })
-      .linkDirectionalParticleWidth(1.0)
-      .linkDirectionalParticleSpeed(0.005)
-      .linkDirectionalParticleColor(link => {
-        const sId = typeof link.source === 'object' ? link.source.id : link.source;
-        const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return '#ffffff';
-        const sourceNode = filteredData.nodes.find(n => n.id === sId);
-        return getCategoryColor(sourceNode?.category);
-      })
+      .linkDirectionalParticleWidth(1.2)
+      .linkDirectionalParticleSpeed(0.006)
+      .linkDirectionalParticleColor(() => '#1a1a1a')
 
       // Interactions
       .onNodeClick(handleNodeClick)
       .onNodeHover(handleNodeHover)
       .onBackgroundClick(handleBackgroundClick)
 
-      // Force — pull connected nodes closer together
-      .d3Force('charge', d3.forceManyBody().strength(-150))
-      .d3Force('link', d3.forceLink()
-        .distance(link => 40 + 30 / (link.strength || 0.5))
-        .strength(link => 0.3 + (link.strength || 0.5) * 0.4))
-      .d3Force('center', d3.forceCenter())
-      .d3Force('collision', d3.forceCollide(n => 8))
-      .warmupTicks(80)
-      .cooldownTicks(200);
+      // Disable forces — we use fixed positions on sphere
+      .d3Force('charge', null)
+      .d3Force('link', null)
+      .d3Force('center', null)
+      .warmupTicks(0)
+      .cooldownTicks(0);
 
-    // Camera position
+    // Camera
     setTimeout(() => {
-      graph.cameraPosition({ x: 200, y: 150, z: 400 });
-    }, 100);
+      graph.cameraPosition({ x: 0, y: 0, z: 450 });
+    }, 50);
 
-    // Add ambient light
+    // Auto-rotate
+    const controls = graph.controls();
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    // Lighting
     const scene = graph.scene();
-    const ambientLight = new THREE.AmbientLight(0x444466, 1.5);
-    scene.add(ambientLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    dirLight.position.set(100, 200, 100);
-    scene.add(dirLight);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
-    // Add star-like background
-    addBackgroundParticles(scene);
+    // Subtle wireframe sphere guide
+    addGuideSphere(scene);
 
     updateStats(filteredData);
   }
 
-  // ===== Background Particles =====
-  function addBackgroundParticles(scene) {
-    const count = 500;
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-
-    for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 2000;
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 2000;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 2000;
-
-      const brightness = 0.1 + Math.random() * 0.3;
-      colors[i * 3] = brightness;
-      colors[i * 3 + 1] = brightness;
-      colors[i * 3 + 2] = brightness + Math.random() * 0.1;
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const mat = new THREE.PointsMaterial({
-      size: 1.5,
-      vertexColors: true,
+  // ===== Ghost wireframe sphere =====
+  function addGuideSphere(scene) {
+    const geo = new THREE.SphereGeometry(SPHERE_RADIUS * 0.98, 32, 32);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xcccccc,
+      wireframe: true,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.04,
     });
-
-    scene.add(new THREE.Points(geo, mat));
+    scene.add(new THREE.Mesh(geo, mat));
   }
 
   // ===== Data Filtering =====
   function getFilteredData() {
     const searchQuery = document.getElementById('search-input').value.toLowerCase();
-
     const nodes = GRAPH_DATA.nodes.filter(n => {
       if (!activeCategories.has(n.category)) return false;
       if (searchQuery && !n.label.toLowerCase().includes(searchQuery) &&
         !n.description?.toLowerCase().includes(searchQuery)) return false;
       return true;
     });
-
     const nodeIds = new Set(nodes.map(n => n.id));
     const links = GRAPH_DATA.links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
-
     return { nodes, links };
   }
 
@@ -251,15 +233,15 @@
     updateConnectedSet();
     showNodeDetail(node);
 
-    // Focus camera on node
-    const distance = 180;
+    // Stop auto-rotate on interaction
+    graph.controls().autoRotate = false;
+
+    const distance = 120;
     const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
     graph.cameraPosition(
       { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
-      node,
-      1200
+      node, 1000
     );
-
     refreshGraph();
   }
 
@@ -276,10 +258,6 @@
         <div class="tooltip-desc">${(node.description || '').substring(0, 80)}${node.description?.length > 80 ? '...' : ''}</div>
       `;
       tooltip.classList.remove('hidden');
-
-      // Position tooltip near cursor
-      const rect = container.getBoundingClientRect();
-      const event = graph.renderer().domElement;
       document.addEventListener('mousemove', positionTooltip);
     } else {
       container.style.cursor = 'default';
@@ -290,16 +268,15 @@
 
   function positionTooltip(e) {
     const tooltip = document.getElementById('tooltip');
-    const x = e.clientX + 15;
-    const y = e.clientY + 15;
-    tooltip.style.left = Math.min(x, window.innerWidth - 280) + 'px';
-    tooltip.style.top = Math.min(y, window.innerHeight - 120) + 'px';
+    tooltip.style.left = Math.min(e.clientX + 15, window.innerWidth - 280) + 'px';
+    tooltip.style.top = Math.min(e.clientY + 15, window.innerHeight - 120) + 'px';
   }
 
   function handleBackgroundClick() {
     selectedNode = null;
     updateConnectedSet();
     hideNodeDetail();
+    graph.controls().autoRotate = true;
     refreshGraph();
   }
 
@@ -307,15 +284,13 @@
   function showNodeDetail(node) {
     const panel = document.getElementById('node-detail');
     const color = getCategoryColor(node.category);
-
     document.getElementById('detail-category').textContent = CATEGORIES[node.category]?.label || '';
-    document.getElementById('detail-category').style.background = color + '20';
+    document.getElementById('detail-category').style.background = color + '18';
     document.getElementById('detail-category').style.color = color;
     document.getElementById('detail-title').textContent = node.label;
     document.getElementById('detail-date').textContent = node.date || '';
     document.getElementById('detail-description').textContent = node.description || '';
 
-    // Keypoints
     const kpList = document.getElementById('detail-keypoints');
     kpList.innerHTML = '';
     (node.keypoints || []).forEach(kp => {
@@ -324,7 +299,6 @@
       kpList.appendChild(li);
     });
 
-    // Connections
     const connDiv = document.getElementById('detail-connections');
     connDiv.innerHTML = '';
     const connectedLinks = GRAPH_DATA.links.filter(
@@ -332,30 +306,27 @@
         (typeof l.source === 'object' && l.source.id === node.id) ||
         (typeof l.target === 'object' && l.target.id === node.id)
     );
-    const connectedIds = new Set();
+    const connIds = new Set();
     connectedLinks.forEach(l => {
       const sid = typeof l.source === 'object' ? l.source.id : l.source;
       const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid !== node.id) connectedIds.add(sid);
-      if (tid !== node.id) connectedIds.add(tid);
+      if (sid !== node.id) connIds.add(sid);
+      if (tid !== node.id) connIds.add(tid);
     });
-    connectedIds.forEach(id => {
+    connIds.forEach(id => {
       const n = GRAPH_DATA.nodes.find(x => x.id === id);
       if (!n) return;
       const tag = document.createElement('span');
       tag.className = 'connection-tag';
       tag.textContent = n.label;
-      tag.style.borderColor = getCategoryColor(n.category) + '40';
       tag.addEventListener('click', () => {
-        const graphNode = graph.graphData().nodes.find(gn => gn.id === id);
-        if (graphNode) handleNodeClick(graphNode);
+        const gn = graph.graphData().nodes.find(x => x.id === id);
+        if (gn) handleNodeClick(gn);
       });
       connDiv.appendChild(tag);
     });
 
-    // Source
     document.getElementById('detail-source').textContent = node.source || '—';
-
     panel.classList.remove('hidden');
   }
 
@@ -363,10 +334,11 @@
     document.getElementById('node-detail').classList.add('hidden');
   }
 
-  // ===== Refresh Graph =====
+  // ===== Refresh =====
   function refreshGraph() {
     if (!graph) return;
     const data = getFilteredData();
+    assignSphericalPositions(data.nodes);
     graph.graphData(data);
     updateStats(data);
   }
@@ -378,7 +350,6 @@
 
   // ===== Side Panel =====
   function initSidePanel() {
-    // Category filters
     const filtersDiv = document.getElementById('category-filters');
     Object.entries(CATEGORIES).forEach(([key, cat]) => {
       const count = GRAPH_DATA.nodes.filter(n => n.category === key).length;
@@ -392,11 +363,8 @@
       `;
       div.addEventListener('click', () => {
         div.classList.toggle('active');
-        if (activeCategories.has(key)) {
-          activeCategories.delete(key);
-        } else {
-          activeCategories.add(key);
-        }
+        if (activeCategories.has(key)) activeCategories.delete(key);
+        else activeCategories.add(key);
         refreshGraph();
       });
       filtersDiv.appendChild(div);
@@ -404,48 +372,41 @@
 
     // Timeline
     const timelineDiv = document.getElementById('timeline');
-    const datedNodes = GRAPH_DATA.nodes
+    GRAPH_DATA.nodes
       .filter(n => n.date)
-      .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-
-    datedNodes.forEach((node, i) => {
-      const item = document.createElement('div');
-      item.className = 'timeline-item';
-      item.innerHTML = `
-        <div class="timeline-dot-container">
-          <div class="timeline-dot" style="background: ${getCategoryColor(node.category)}"></div>
-          ${i < datedNodes.length - 1 ? '<div class="timeline-line"></div>' : ''}
-        </div>
-        <div class="timeline-content">
-          <div class="timeline-date">${node.date}</div>
-          <div class="timeline-title">${node.label}</div>
-        </div>
-      `;
-      item.addEventListener('click', () => {
-        const graphNode = graph.graphData().nodes.find(gn => gn.id === node.id);
-        if (graphNode) handleNodeClick(graphNode);
+      .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      .forEach((node, i, arr) => {
+        const item = document.createElement('div');
+        item.className = 'timeline-item';
+        item.innerHTML = `
+          <div class="timeline-dot-container">
+            <div class="timeline-dot" style="background: ${getCategoryColor(node.category)}"></div>
+            ${i < arr.length - 1 ? '<div class="timeline-line"></div>' : ''}
+          </div>
+          <div class="timeline-content">
+            <div class="timeline-date">${node.date}</div>
+            <div class="timeline-title">${node.label}</div>
+          </div>
+        `;
+        item.addEventListener('click', () => {
+          const gn = graph.graphData().nodes.find(x => x.id === node.id);
+          if (gn) handleNodeClick(gn);
+        });
+        timelineDiv.appendChild(item);
       });
-      timelineDiv.appendChild(item);
-    });
 
     // Legend
-    const legendDiv = document.getElementById('legend');
-    legendDiv.innerHTML = `
+    document.getElementById('legend').innerHTML = `
       <div class="legend-item">
-        <div class="legend-icon"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#00f0ff" opacity="0.6"/></svg></div>
-        <span>ノード = トピック / 人物 / 決定事項</span>
+        <div class="legend-icon"><svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="#2a2a2a"/></svg></div>
+        <span>点 = トピック / 人物 / 意思決定</span>
       </div>
       <div class="legend-item">
-        <div class="legend-icon"><svg width="12" height="2"><line x1="0" y1="1" x2="12" y2="1" stroke="#00f0ff" stroke-width="1.5"/></svg></div>
-        <span>リンク = 関連性（太さ=強さ）</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-icon"><svg width="12" height="12"><circle cx="6" cy="6" r="2" fill="#fff"/></svg></div>
-        <span>パーティクル = 情報の流れ</span>
+        <div class="legend-icon"><svg width="14" height="2"><line x1="0" y1="1" x2="14" y2="1" stroke="#555" stroke-width="1.5"/></svg></div>
+        <span>線 = 関連性</span>
       </div>
     `;
 
-    // Toggle
     document.getElementById('panel-toggle').addEventListener('click', () => {
       document.getElementById('side-panel').classList.toggle('collapsed');
     });
@@ -453,22 +414,18 @@
 
   // ===== Search =====
   function initSearch() {
-    let debounceTimer;
+    let timer;
     document.getElementById('search-input').addEventListener('input', (e) => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
         refreshGraph();
-        const query = e.target.value.toLowerCase();
-        if (query) {
-          const match = graph.graphData().nodes.find(n =>
-            n.label.toLowerCase().includes(query)
-          );
-          if (match) {
-            graph.cameraPosition(
-              { x: match.x + 150, y: match.y + 80, z: match.z + 150 },
-              match,
-              800
-            );
+        const q = e.target.value.toLowerCase();
+        if (q) {
+          const m = graph.graphData().nodes.find(n => n.label.toLowerCase().includes(q));
+          if (m) {
+            graph.controls().autoRotate = false;
+            const d = 1 + 120 / Math.hypot(m.x, m.y, m.z);
+            graph.cameraPosition({ x: m.x * d, y: m.y * d, z: m.z * d }, m, 800);
           }
         }
       }, 300);
@@ -485,14 +442,14 @@
         if (view !== currentView) {
           currentView = view;
           if (view === '2d') {
-            // Flatten to 2D by constraining z
-            graph.d3Force('z', d3.forceZ(0).strength(0.5));
-            graph.cameraPosition({ x: 0, y: 0, z: 600 }, { x: 0, y: 0, z: 0 }, 1000);
+            // Flatten: override fz to 0
+            graph.graphData().nodes.forEach(n => { n.fz = 0; });
+            graph.cameraPosition({ x: 0, y: 0, z: 500 }, { x: 0, y: 0, z: 0 }, 1000);
+            graph.refresh();
           } else {
-            graph.d3Force('z', null);
-            graph.cameraPosition({ x: 200, y: 150, z: 400 }, { x: 0, y: 0, z: 0 }, 1000);
+            refreshGraph(); // re-assign sphere positions
+            graph.cameraPosition({ x: 0, y: 0, z: 450 }, { x: 0, y: 0, z: 0 }, 1000);
           }
-          graph.numDimensions(view === '2d' ? 2 : 3);
         }
       });
     });
@@ -504,6 +461,7 @@
       selectedNode = null;
       updateConnectedSet();
       hideNodeDetail();
+      graph.controls().autoRotate = true;
       refreshGraph();
     });
   }
@@ -513,55 +471,38 @@
     const canvas = document.getElementById('minimap');
     const ctx = canvas.getContext('2d');
     const nodes = graph?.graphData().nodes || [];
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'rgba(10, 10, 15, 0.5)';
+    ctx.fillStyle = 'rgba(230,230,235,0.6)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (nodes.length === 0) { requestAnimationFrame(updateMinimap); return; }
 
-    if (nodes.length === 0) return;
-
-    // Find bounds
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     nodes.forEach(n => {
-      if (n.x < minX) minX = n.x;
-      if (n.x > maxX) maxX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.y > maxY) maxY = n.y;
+      if (n.x < minX) minX = n.x; if (n.x > maxX) maxX = n.x;
+      if (n.y < minY) minY = n.y; if (n.y > maxY) maxY = n.y;
     });
+    const p = 12, rX = maxX - minX || 1, rY = maxY - minY || 1;
+    const sc = Math.min((canvas.width - p * 2) / rX, (canvas.height - p * 2) / rY);
 
-    const padding = 15;
-    const rangeX = maxX - minX || 1;
-    const rangeY = maxY - minY || 1;
-    const scaleX = (canvas.width - padding * 2) / rangeX;
-    const scaleY = (canvas.height - padding * 2) / rangeY;
-    const scale = Math.min(scaleX, scaleY);
-
-    // Draw links
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    // Links
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
     ctx.lineWidth = 0.5;
-    const links = graph.graphData().links;
-    links.forEach(l => {
+    graph.graphData().links.forEach(l => {
       const s = typeof l.source === 'object' ? l.source : nodes.find(n => n.id === l.source);
       const t = typeof l.target === 'object' ? l.target : nodes.find(n => n.id === l.target);
       if (!s || !t) return;
       ctx.beginPath();
-      ctx.moveTo(padding + (s.x - minX) * scale, padding + (s.y - minY) * scale);
-      ctx.lineTo(padding + (t.x - minX) * scale, padding + (t.y - minY) * scale);
+      ctx.moveTo(p + (s.x - minX) * sc, p + (s.y - minY) * sc);
+      ctx.lineTo(p + (t.x - minX) * sc, p + (t.y - minY) * sc);
       ctx.stroke();
     });
 
-    // Draw nodes
+    // Nodes
     nodes.forEach(n => {
-      const x = padding + (n.x - minX) * scale;
-      const y = padding + (n.y - minY) * scale;
-      const color = getCategoryColor(n.category);
-
       ctx.beginPath();
-      ctx.arc(x, y, 2, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.8;
+      ctx.arc(p + (n.x - minX) * sc, p + (n.y - minY) * sc, 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#2a2a2a';
       ctx.fill();
-      ctx.globalAlpha = 1;
     });
 
     requestAnimationFrame(updateMinimap);
@@ -571,15 +512,12 @@
   function hideLoading() {
     setTimeout(() => {
       document.getElementById('loading-screen').classList.add('fade-out');
-    }, 1500);
+    }, 1200);
   }
 
-  // ===== Window Resize =====
   function initResize() {
     window.addEventListener('resize', () => {
-      if (graph) {
-        graph.width(window.innerWidth).height(window.innerHeight);
-      }
+      if (graph) graph.width(window.innerWidth).height(window.innerHeight);
     });
   }
 
@@ -592,17 +530,12 @@
     initCloseDetail();
     initResize();
     hideLoading();
-
-    // Start minimap after graph settles
-    setTimeout(updateMinimap, 2000);
-
-    // Open side panel after a moment
+    setTimeout(updateMinimap, 1500);
     setTimeout(() => {
       document.getElementById('side-panel').classList.remove('collapsed');
-    }, 2500);
+    }, 2000);
   }
 
-  // Wait for DOM
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
