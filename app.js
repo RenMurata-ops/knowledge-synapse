@@ -21,10 +21,37 @@
     return { r, g, b };
   }
 
+  // ===== Caches =====
+  let linkCountCache = {};
+  let connectedNodeIds = new Set();
+
+  function buildCaches() {
+    // Link count per node
+    linkCountCache = {};
+    GRAPH_DATA.nodes.forEach(n => { linkCountCache[n.id] = 0; });
+    GRAPH_DATA.links.forEach(l => {
+      linkCountCache[l.source] = (linkCountCache[l.source] || 0) + 1;
+      linkCountCache[l.target] = (linkCountCache[l.target] || 0) + 1;
+    });
+  }
+
+  function updateConnectedSet() {
+    connectedNodeIds = new Set();
+    if (!selectedNode) return;
+    connectedNodeIds.add(selectedNode.id);
+    GRAPH_DATA.links.forEach(l => {
+      const sId = typeof l.source === 'object' ? l.source.id : l.source;
+      const tId = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sId === selectedNode.id) connectedNodeIds.add(tId);
+      if (tId === selectedNode.id) connectedNodeIds.add(sId);
+    });
+  }
+
   // ===== Graph Initialization =====
   function initGraph() {
     const container = document.getElementById('graph-container');
     const filteredData = getFilteredData();
+    buildCaches();
 
     graph = ForceGraph3D({ controlType: 'orbit' })(container)
       .graphData(filteredData)
@@ -32,114 +59,105 @@
       .width(window.innerWidth)
       .height(window.innerHeight)
 
-      // Node appearance — clean dots
+      // Node — small clean dots
       .nodeLabel(n => '')
       .nodeThreeObject(n => {
         const group = new THREE.Group();
         const color = getCategoryColor(n.category);
         const isSelected = selectedNode && selectedNode.id === n.id;
         const isHovered = hoveredNode && hoveredNode.id === n.id;
+        const isNeighbor = selectedNode && connectedNodeIds.has(n.id);
+        const isDimmed = selectedNode && !isSelected && !isNeighbor;
 
-        // Connection count affects dot size
-        const linkCount = GRAPH_DATA.links.filter(
-          l => l.source === n.id || l.target === n.id
-        ).length;
-        const baseSize = 3 + Math.min(linkCount, 10) * 0.8;
-        const size = isSelected ? baseSize * 1.4 : isHovered ? baseSize * 1.2 : baseSize;
+        // Dot size based on connections
+        const linkCount = linkCountCache[n.id] || 0;
+        const baseSize = 2.5 + Math.min(linkCount, 12) * 0.7;
+        const size = isSelected ? baseSize * 1.5 : isHovered ? baseSize * 1.3 : baseSize;
 
-        // Core dot — clean, solid circle
-        const dotGeo = new THREE.SphereGeometry(size, 32, 32);
+        // Core dot
+        const dotGeo = new THREE.SphereGeometry(size, 24, 24);
         const dotMat = new THREE.MeshBasicMaterial({
           color: isSelected ? 0xffffff : new THREE.Color(color),
           transparent: true,
-          opacity: isSelected ? 1.0 : isHovered ? 1.0 : 0.85,
+          opacity: isDimmed ? 0.15 : isSelected ? 1.0 : 0.9,
         });
         group.add(new THREE.Mesh(dotGeo, dotMat));
 
-        // Subtle glow around dot
-        const glowGeo = new THREE.SphereGeometry(size * 2.0, 32, 32);
-        const glowMat = new THREE.MeshBasicMaterial({
-          color: isSelected ? 0xffffff : new THREE.Color(color),
-          transparent: true,
-          opacity: isSelected ? 0.12 : isHovered ? 0.08 : 0.03,
-        });
-        group.add(new THREE.Mesh(glowGeo, glowMat));
+        // Soft glow
+        if (!isDimmed) {
+          const glowGeo = new THREE.SphereGeometry(size * 2.5, 24, 24);
+          const glowMat = new THREE.MeshBasicMaterial({
+            color: isSelected ? 0xffffff : new THREE.Color(color),
+            transparent: true,
+            opacity: isSelected ? 0.15 : isNeighbor ? 0.08 : 0.035,
+          });
+          group.add(new THREE.Mesh(glowGeo, glowMat));
+        }
 
-        // Label — only show on hover or select, or for large nodes
-        if (isSelected || isHovered || linkCount >= 4) {
+        // Label
+        const showLabel = isSelected || isHovered || isNeighbor || linkCount >= 3;
+        if (showLabel && !isDimmed) {
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d');
-          const text = n.label;
-          const fontSize = 36;
           canvas.width = 512;
           canvas.height = 64;
-          ctx.font = `400 ${fontSize}px "Noto Sans JP", "Inter", sans-serif`;
+          ctx.font = `400 34px "Noto Sans JP", "Inter", sans-serif`;
           ctx.textAlign = 'center';
           ctx.fillStyle = isSelected ? '#ffffff' : color;
-          ctx.globalAlpha = isSelected ? 1.0 : isHovered ? 0.95 : 0.55;
-          ctx.fillText(text, 256, 45);
-
+          ctx.globalAlpha = isSelected ? 1.0 : isHovered ? 0.9 : isNeighbor ? 0.7 : 0.45;
+          ctx.fillText(n.label, 256, 44);
           const texture = new THREE.CanvasTexture(canvas);
           texture.minFilter = THREE.LinearFilter;
-          const spriteMat = new THREE.SpriteMaterial({
-            map: texture,
-            transparent: true,
-            depthWrite: false,
-          });
-          const sprite = new THREE.Sprite(spriteMat);
-          sprite.scale.set(55, 7, 1);
-          sprite.position.y = size + 6;
+          const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: texture, transparent: true, depthWrite: false,
+          }));
+          sprite.scale.set(50, 6, 1);
+          sprite.position.y = size + 5;
           group.add(sprite);
         }
 
         return group;
       })
 
-      // Link appearance — visible, clean lines
+      // Lines — always visible, thick enough to feel "connected"
       .linkColor(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        // Highlight links connected to selected node
         if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) {
           return '#ffffff';
         }
-        const sourceColor = getCategoryColor(
-          filteredData.nodes.find(n => n.id === sId)?.category
-        );
-        return sourceColor || '#334';
+        if (selectedNode) return 'rgba(60,60,80,0.3)';
+        // Blend source and target colors
+        const sColor = getCategoryColor(filteredData.nodes.find(n => n.id === sId)?.category);
+        return sColor || '#445';
       })
       .linkOpacity(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) {
-          return 0.6;
-        }
-        return 0.15 + (link.strength || 0.5) * 0.15;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 0.7;
+        if (selectedNode) return 0.04;
+        return 0.25 + (link.strength || 0.5) * 0.2;
       })
       .linkWidth(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) {
-          return 1.5;
-        }
-        return 0.4 + (link.strength || 0.5) * 0.6;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 2.0;
+        if (selectedNode) return 0.2;
+        return 0.6 + (link.strength || 0.5) * 1.0;
       })
       .linkDirectionalParticles(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
         const tId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) {
-          return 3;
-        }
-        return 1;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return 4;
+        if (selectedNode) return 0;
+        return Math.ceil((link.strength || 0.5) * 2);
       })
-      .linkDirectionalParticleWidth(0.8)
-      .linkDirectionalParticleSpeed(0.003)
+      .linkDirectionalParticleWidth(1.0)
+      .linkDirectionalParticleSpeed(0.005)
       .linkDirectionalParticleColor(link => {
         const sId = typeof link.source === 'object' ? link.source.id : link.source;
-        if (selectedNode) {
-          const tId = typeof link.target === 'object' ? link.target.id : link.target;
-          if (sId === selectedNode.id || tId === selectedNode.id) return '#ffffff';
-        }
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        if (selectedNode && (sId === selectedNode.id || tId === selectedNode.id)) return '#ffffff';
         const sourceNode = filteredData.nodes.find(n => n.id === sId);
         return getCategoryColor(sourceNode?.category);
       })
@@ -149,11 +167,13 @@
       .onNodeHover(handleNodeHover)
       .onBackgroundClick(handleBackgroundClick)
 
-      // Force configuration — spread nodes out for clearer lines
-      .d3Force('charge', d3.forceManyBody().strength(-300))
-      .d3Force('link', d3.forceLink().distance(link => 100 / (link.strength || 0.5)).strength(link => (link.strength || 0.5) * 0.25))
+      // Force — pull connected nodes closer together
+      .d3Force('charge', d3.forceManyBody().strength(-150))
+      .d3Force('link', d3.forceLink()
+        .distance(link => 40 + 30 / (link.strength || 0.5))
+        .strength(link => 0.3 + (link.strength || 0.5) * 0.4))
       .d3Force('center', d3.forceCenter())
-      .d3Force('collision', d3.forceCollide(n => 12))
+      .d3Force('collision', d3.forceCollide(n => 8))
       .warmupTicks(80)
       .cooldownTicks(200);
 
@@ -228,6 +248,7 @@
   function handleNodeClick(node) {
     if (!node) return;
     selectedNode = node;
+    updateConnectedSet();
     showNodeDetail(node);
 
     // Focus camera on node
@@ -277,6 +298,7 @@
 
   function handleBackgroundClick() {
     selectedNode = null;
+    updateConnectedSet();
     hideNodeDetail();
     refreshGraph();
   }
@@ -480,6 +502,7 @@
   function initCloseDetail() {
     document.getElementById('close-detail').addEventListener('click', () => {
       selectedNode = null;
+      updateConnectedSet();
       hideNodeDetail();
       refreshGraph();
     });
