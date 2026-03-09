@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Knowledge Synapse — ナレッジシナプス</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="loader">
+      <div class="pulse-ring"></div>
+      <div class="pulse-ring delay-1"></div>
+      <div class="pulse-ring delay-2"></div>
+      <div class="loader-text">SYNAPSE</div>
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header id="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 28 28">
+          <circle cx="14" cy="14" r="4" fill="#00f0ff" opacity="0.9"/>
+          <circle cx="14" cy="14" r="8" fill="none" stroke="#00f0ff" stroke-width="0.5" opacity="0.5"/>
+          <circle cx="14" cy="14" r="12" fill="none" stroke="#00f0ff" stroke-width="0.3" opacity="0.3"/>
+          <circle cx="6" cy="8" r="2" fill="#a855f7" opacity="0.8"/>
+          <circle cx="22" cy="10" r="2" fill="#f472b6" opacity="0.8"/>
+          <circle cx="10" cy="22" r="2" fill="#34d399" opacity="0.8"/>
+          <line x1="14" y1="14" x2="6" y2="8" stroke="#a855f7" stroke-width="0.5" opacity="0.4"/>
+          <line x1="14" y1="14" x2="22" y2="10" stroke="#f472b6" stroke-width="0.5" opacity="0.4"/>
+          <line x1="14" y1="14" x2="10" y2="22" stroke="#34d399" stroke-width="0.5" opacity="0.4"/>
+        </svg>
+        <span>Knowledge Synapse</span>
+      </div>
+    </div>
+    <div class="header-center">
+      <div class="search-container">
+        <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input type="text" id="search-input" placeholder="ノードを検索...">
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="view-toggles">
+        <button class="view-btn active" data-view="3d" title="3D View">3D</button>
+        <button class="view-btn" data-view="2d" title="2D View">2D</button>
+      </div>
+      <div class="stats">
+        <span id="node-count">0</span> nodes
+        <span class="stat-divider">|</span>
+        <span id="link-count">0</span> links
+      </div>
+    </div>
+  </header>
+
+  <!-- Side Panel -->
+  <aside id="side-panel" class="collapsed">
+    <button id="panel-toggle" class="panel-toggle-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+
+    <div class="panel-content">
+      <!-- Category Filter -->
+      <section class="panel-section">
+        <h3 class="section-title">カテゴリ</h3>
+        <div id="category-filters"></div>
+      </section>
+
+      <!-- Timeline -->
+      <section class="panel-section">
+        <h3 class="section-title">タイムライン</h3>
+        <div id="timeline"></div>
+      </section>
+
+      <!-- Legend -->
+      <section class="panel-section">
+        <h3 class="section-title">凡例</h3>
+        <div id="legend"></div>
+      </section>
+    </div>
+  </aside>
+
+  <!-- Node Detail Modal -->
+  <div id="node-detail" class="node-detail hidden">
+    <button id="close-detail" class="close-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <div class="detail-header">
+      <div class="detail-category-badge" id="detail-category"></div>
+      <h2 id="detail-title"></h2>
+      <div class="detail-date" id="detail-date"></div>
+    </div>
+    <div class="detail-body">
+      <div class="detail-section">
+        <h4>概要</h4>
+        <p id="detail-description"></p>
+      </div>
+      <div class="detail-section">
+        <h4>キーポイント</h4>
+        <ul id="detail-keypoints"></ul>
+      </div>
+      <div class="detail-section">
+        <h4>関連ノード</h4>
+        <div id="detail-connections"></div>
+      </div>
+      <div class="detail-section">
+        <h4>ソース</h4>
+        <div id="detail-source" class="detail-source"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tooltip -->
+  <div id="tooltip" class="tooltip hidden"></div>
+
+  <!-- Graph Container -->
+  <div id="graph-container"></div>
+
+  <!-- Minimap -->
+  <canvas id="minimap" width="180" height="120"></canvas>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.160.0/examples/js/renderers/CSS2DRenderer.js"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
+  <script src="https://unpkg.com/d3-force-3d@3.0.5/dist/d3-force-3d.min.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
